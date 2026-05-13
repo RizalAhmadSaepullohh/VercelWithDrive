@@ -59,6 +59,28 @@ function restFieldsToJs(fields) {
   return obj;
 }
 
+async function deleteFileIfExists(drive, fileName, parentFolderId) {
+  try {
+    const safeFileName = String(fileName).replace(/'/g, "\\'");
+    const query = `'${parentFolderId}' in parents and name = '${safeFileName}' and trashed = false`;
+    const res = await drive.files.list({
+      q: query,
+      fields: "files(id, name)",
+      spaces: "drive",
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true
+    });
+    if (res.data.files && res.data.files.length > 0) {
+      for (const file of res.data.files) {
+        console.log(`[GDrive Cleanup] Menghapus file lama: ${file.name} (${file.id})`);
+        await drive.files.delete({ fileId: file.id, supportsAllDrives: true });
+      }
+    }
+  } catch (err) {
+    console.warn(`[GDrive Cleanup] Gagal menghapus file lama (mungkin tidak ada):`, err.message);
+  }
+}
+
 async function getOrCreateSubfolder(drive, folderName, parentFolderId) {
   try {
     const safeFolderName = String(folderName).replace(/'/g, "\\'");
@@ -131,16 +153,7 @@ export async function POST(req /** @type {NextRequest} */) {
 
     const cleanName = String(namaResponden).replace(/[^a-zA-Z0-9]/g, "_");
 
-    const now = new Date();
-    const d = String(now.getDate()).padStart(2, "0");
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const y = String(now.getFullYear());
-    const H = String(now.getHours()).padStart(2, "0");
-    const M = String(now.getMinutes()).padStart(2, "0");
-    const S = String(now.getSeconds()).padStart(2, "0");
-    const timestampStr = `${d}${m}${y}_${H}${M}${S}`;
-
-    const fileName = `${prefix}_${cleanName}_${timestampStr}.wav`;
+    const fileName = `${prefix}_${cleanName}.wav`;
 
     // 3. Pengunggahan ke Google Drive (Mendukung Akun Pribadi Peneliti ATAU Robot Service Account)
     let webViewLink = "";
@@ -171,6 +184,9 @@ export async function POST(req /** @type {NextRequest} */) {
         const drive = google.drive({ version: "v3", auth: oauth2Client });
         console.log(`[GDrive Target] Mencari/membuat subfolder kategori: '${tugas_kategori}' di folder pribadi: '${parentFolderId}'`);
         const targetFolderId = await getOrCreateSubfolder(drive, tugas_kategori, parentFolderId);
+
+        // Hapus file lama jika ada agar "Replace"
+        await deleteFileIfExists(drive, fileName, targetFolderId);
 
         console.log(`[GDrive Upload] Mengunggah berkas fisik via otentikasi pribadi: ${fileName}`);
         const uploadRes = await drive.files.create({
@@ -206,6 +222,9 @@ export async function POST(req /** @type {NextRequest} */) {
         const drive = google.drive({ version: "v3", auth });
         console.log(`[GDrive Target] Mencari/membuat subfolder kategori: '${tugas_kategori}' di induk: '${parentFolderId}'`);
         const targetFolderId = await getOrCreateSubfolder(drive, tugas_kategori, parentFolderId);
+
+        // Hapus file lama jika ada agar "Replace"
+        await deleteFileIfExists(drive, fileName, targetFolderId);
 
         console.log(`[GDrive Upload] Mengunggah berkas fisik: ${fileName}`);
         const uploadRes = await drive.files.create({
