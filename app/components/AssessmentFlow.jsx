@@ -154,6 +154,8 @@ function useMediaRecorder() {
     // Combine chunks and encode to WAV
     const pcmData = pcmDataRef.current;
     if (pcmData.length > 0) {
+      const originalSampleRate = audioCtx?.sampleRate || 44100;
+      
       // Flatten all Float32Arrays
       let totalLength = 0;
       for (const arr of pcmData) totalLength += arr.length;
@@ -164,8 +166,9 @@ function useMediaRecorder() {
         offset += arr.length;
       }
 
-      // Encode to 16kHz WAV
-      const wavBlob = encodeWAV(flat, 16000);
+      // Downsample to 16kHz before encoding
+      const downsampled = downsampleBuffer(flat, originalSampleRate, 16000);
+      const wavBlob = encodeWAV(downsampled, 16000);
       setChunks([wavBlob]);
     }
 
