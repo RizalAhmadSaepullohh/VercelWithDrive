@@ -140,7 +140,7 @@ export async function POST(req /** @type {NextRequest} */) {
     const S = String(now.getSeconds()).padStart(2, "0");
     const timestampStr = `${d}${m}${y}_${H}${M}${S}`;
 
-    const fileName = `${prefix}_${cleanName}_${timestampStr}.webm`;
+    const fileName = `${prefix}_${cleanName}_${timestampStr}.wav`;
 
     // 3. Pengunggahan ke Google Drive (Mendukung Akun Pribadi Peneliti ATAU Robot Service Account)
     let webViewLink = "";
@@ -175,7 +175,7 @@ export async function POST(req /** @type {NextRequest} */) {
         console.log(`[GDrive Upload] Mengunggah berkas fisik via otentikasi pribadi: ${fileName}`);
         const uploadRes = await drive.files.create({
           resource: { name: fileName, parents: [targetFolderId] },
-          media: { mimeType: "audio/webm", body: stream },
+          media: { mimeType: "audio/wav", body: stream },
           fields: "id, webViewLink",
           supportsAllDrives: true
         });
@@ -210,7 +210,7 @@ export async function POST(req /** @type {NextRequest} */) {
         console.log(`[GDrive Upload] Mengunggah berkas fisik: ${fileName}`);
         const uploadRes = await drive.files.create({
           resource: { name: fileName, parents: [targetFolderId] },
-          media: { mimeType: "audio/webm", body: stream },
+          media: { mimeType: "audio/wav", body: stream },
           fields: "id, webViewLink",
           supportsAllDrives: true
         });

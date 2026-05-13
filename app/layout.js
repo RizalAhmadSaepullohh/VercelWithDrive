@@ -29,8 +29,8 @@ export default function RootLayout({ children }) {
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {/* Preload Whisper model globally when the app starts */}
-        <PreloadWhisper />
+        {/* Whisper disabled for Data Collection Mode (Speed Optimized) */}
+        {/* <PreloadWhisper /> */}
         <UiStateProvider>
           {children}
         </UiStateProvider>

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, forwardRef, useImper
 import Countdown from "@/app/components/Countdown";
 import { subscribeWhisper, getWhisperState } from "@/lib/globalWhisperState";
 import useAssessment from "@/hooks/useAssessment";
+import { encodeWAV, downsampleBuffer } from "@/lib/wavEncoder";
 
 const FeatureComputer = forwardRef(function FeatureComputer({ onStatus }, ref) {
   const { file, setFile, setRefTopic, setModel, setTranscript, run, result, status } = useAssessment();
@@ -51,17 +52,20 @@ const FeatureComputer = forwardRef(function FeatureComputer({ onStatus }, ref) {
 
 function useMediaRecorder() {
   const mediaRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const processorRef = useRef(null);
+  const pcmDataRef = useRef([]);
+  
   const [supported, setSupported] = useState(false);
   const [permissionError, setPermissionError] = useState("");
   const [isRecording, setIsRecording] = useState(false);
-  const [chunks, setChunks] = useState([]);
+  const [chunks, setChunks] = useState([]); // chunks akan berisi [wavBlob]
 
   const canUseMedia = useCallback(() => (
     typeof window !== "undefined"
     && typeof navigator !== "undefined"
     && !!navigator.mediaDevices
     && typeof navigator.mediaDevices.getUserMedia === "function"
-    && typeof window.MediaRecorder !== "undefined"
   ), []);
 
   useEffect(() => {
@@ -94,61 +98,86 @@ function useMediaRecorder() {
         setSupported(false);
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      let mr = null;
-      const candidates = [
-        "audio/webm;codecs=opus",
-        "audio/webm",
-        "audio/mp4",
-        "audio/m4a",
-        "audio/mpeg"
-      ];
-      let chosen = null;
-      try {
-        for (const c of candidates) {
-          if (typeof MediaRecorder.isTypeSupported === "function" && MediaRecorder.isTypeSupported(c)) {
-            chosen = c;
-            break;
-          }
-        }
-        try {
-          mr = chosen ? new MediaRecorder(stream, { mimeType: chosen }) : new MediaRecorder(stream);
-        } catch (innerErr) {
-          try { mr = new MediaRecorder(stream); chosen = null; } catch (e) { throw innerErr || e; }
-        }
-      } catch (e) {
-        stream.getTracks().forEach((t) => t.stop());
-        console.error("MediaRecorder init failed", e);
-        setPermissionError(e?.message || String(e));
-        setSupported(false);
-        return;
-      }
-      const localChunks = [];
-      mr.ondataavailable = (e) => { if (e?.data && e.data.size > 0) localChunks.push(e.data); };
-      mr.onstop = () => {
-        setChunks(localChunks);
-        stream.getTracks().forEach((t) => t.stop());
-        setIsRecording(false);
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true
+        } 
+      });
+
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+      pcmDataRef.current = [];
+      processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        // Copy samples to ref
+        const chunk = new Float32Array(inputData.length);
+        chunk.set(inputData);
+        pcmDataRef.current.push(chunk);
       };
-      mediaRef.current = mr;
+
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      audioCtxRef.current = audioCtx;
+      processorRef.current = processor;
+      mediaRef.current = stream;
+      
       setChunks([]);
       setIsRecording(true);
-      try { mr.start(); } catch (e) { console.warn("MediaRecorder.start failed", e); }
     } catch (e) {
       console.error(e);
       setPermissionError(e?.message || String(e));
     }
-  }, []);
+  }, [canUseMedia]);
 
   const stop = useCallback(() => {
-    const mr = mediaRef.current;
-    if (mr && mr.state !== "inactive") {
-      mr.stop();
+    const audioCtx = audioCtxRef.current;
+    const processor = processorRef.current;
+    const stream = mediaRef.current;
+
+    if (processor) {
+      processor.disconnect();
+      processor.onaudioprocess = null;
     }
+    if (audioCtx) {
+      audioCtx.close();
+    }
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+    }
+
+    // Combine chunks and encode to WAV
+    const pcmData = pcmDataRef.current;
+    if (pcmData.length > 0) {
+      // Flatten all Float32Arrays
+      let totalLength = 0;
+      for (const arr of pcmData) totalLength += arr.length;
+      const flat = new Float32Array(totalLength);
+      let offset = 0;
+      for (const arr of pcmData) {
+        flat.set(arr, offset);
+        offset += arr.length;
+      }
+
+      // Encode to 16kHz WAV
+      const wavBlob = encodeWAV(flat, 16000);
+      setChunks([wavBlob]);
+    }
+
+    setIsRecording(false);
+    audioCtxRef.current = null;
+    processorRef.current = null;
+    mediaRef.current = null;
   }, []);
 
   const reset = useCallback(() => {
     setChunks([]);
+    pcmDataRef.current = [];
   }, []);
 
   return { supported, permissionError, isRecording, chunks, start, stop, reset, requestPermission };
@@ -412,14 +441,14 @@ export default function AssessmentFlow() {
       if (alreadyUploaded) return;
       try {
         setLoading(true);
-        const blob = new Blob(chunks, { type: "audio/webm" });
+        const blob = chunks[0]; // chunks[0] is the WAV blob
         const targetEmail = mahasiswa?.email || mahasiswa?.id || googleEmail || "default_user@ispeak.org";
-        const file = new File([blob], `${targetEmail}_${currentTugas.id}.webm`, { type: "audio/webm" });
+        const file = new File([blob], `${targetEmail}_${currentTugas.id}.wav`, { type: "audio/wav" });
         
         const refTopic = (step === 4 && imageForTask4?.topic)
           ? imageForTask4.topic
           : (currentTugas?.teks || "");
-
+  
         const fd = new FormData();
         fd.set("email", String(targetEmail));
         fd.set("mahasiswa_id", String(targetEmail));
@@ -427,12 +456,12 @@ export default function AssessmentFlow() {
         fd.set("tugas_kategori", currentTugas?.kategori || "");
         fd.set("ref_topic", refTopic);
         fd.set("file", file);
-
+  
         // Langsung dikirim ke rute internal Next.js API Firebase Storage
         const res = await fetch(`/api/rekaman`, { method: "POST", body: fd });
         if (!res.ok) {
           const textErr = await res.text().catch(()=>"");
-          throw new Error(`Upload Firebase Storage gagal: ${res.status} ${textErr}`);
+          throw new Error(`Upload GDrive gagal: ${res.status} ${textErr}`);
         }
         
         const j = await res.json();

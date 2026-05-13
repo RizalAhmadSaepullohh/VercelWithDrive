@@ -14,6 +14,10 @@ export default function PreloadWhisper({ model = "tiny.en" }) {
   const shownPct = useMemo(() => Math.min(50, Math.round(pct)), [pct]);
 
   useEffect(() => {
+    // Whisper is disabled for speed optimization
+    setVisible(false);
+    return;
+    
     let cancelled = false;
     async function start() {
       try {
