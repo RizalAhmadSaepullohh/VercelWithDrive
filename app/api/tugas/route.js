@@ -1,6 +1,5 @@
 import { NextRequest } from "next/server";
-import { json, error } from "../_utils/respond";
-import { getServiceClient } from "@/lib/supabaseServer";
+import { json } from "../_utils/respond";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,76 +56,18 @@ const FALLBACK_TUGAS = [
 ];
 
 export async function GET(req /** @type {NextRequest} */) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
-    const judul = searchParams.get("judul");
-    const index = searchParams.get("index"); // 1-based index like 1..6
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
+  const index = searchParams.get("index");
 
-    try {
-      const supa = getServiceClient();
-      let q = supa.from("tugas").select("*").order("id", { ascending: true });
-      if (id) q = q.eq("id", Number(id)).single();
-      else if (judul) q = q.eq("judul", judul).single();
-      else if (index) {
-        const { data, error: err } = await q;
-        if (err || !data || data.length === 0) {
-          throw new Error("Gunakan fallback");
-        }
-        const idx = Math.max(1, Number(index));
-        const item = Array.isArray(data) ? data[idx - 1] : undefined;
-        if (!item) return json({ ok: true, tugas: FALLBACK_TUGAS[idx - 1] });
-        return json({ ok: true, tugas: item });
-      }
-      const { data, error: dberr } = await q;
-      if (dberr || !data || data.length === 0) throw new Error("Gunakan fallback");
-      return json({ ok: true, tugas: data });
-    } catch (_) {
-      // Fallback mulus tanpa server error
-      if (id) {
-        const t = FALLBACK_TUGAS.find((x) => x.id === Number(id));
-        return json({ ok: true, tugas: t || FALLBACK_TUGAS[0] });
-      }
-      if (judul) {
-        const t = FALLBACK_TUGAS.find((x) => x.judul === judul);
-        return json({ ok: true, tugas: t || FALLBACK_TUGAS[0] });
-      }
-      if (index) {
-        const idx = Math.max(1, Number(index));
-        return json({ ok: true, tugas: FALLBACK_TUGAS[idx - 1] || FALLBACK_TUGAS[0] });
-      }
-      return json({ ok: true, tugas: FALLBACK_TUGAS });
-    }
-  } catch (e) {
-    return json({ ok: true, tugas: FALLBACK_TUGAS });
+  if (id) {
+    const t = FALLBACK_TUGAS.find((x) => x.id === Number(id));
+    return json({ ok: true, tugas: t || FALLBACK_TUGAS[0] });
   }
-}
-
-export async function PATCH(req /** @type {NextRequest} */) {
-  try {
-    const body = await req.json();
-    const { id, judul, kategori, teks, prep_time, record_time } = body;
-    
-    if (!id) return error("ID tugas diperlukan", 400);
-
-    const supa = getServiceClient();
-    const updates = {};
-    if (judul !== undefined) updates.judul = judul;
-    if (kategori !== undefined) updates.kategori = kategori;
-    if (teks !== undefined) updates.teks = teks;
-    if (prep_time !== undefined) updates.prep_time = Number(prep_time);
-    if (record_time !== undefined) updates.record_time = Number(record_time);
-
-    const { data, error: dberr } = await supa
-      .from("tugas")
-      .update(updates)
-      .eq("id", Number(id))
-      .select()
-      .single();
-
-    if (dberr) return error(dberr.message, 500);
-    return json({ ok: true, tugas: data });
-  } catch (e) {
-    return error(e?.message || "Gagal mengupdate tugas", 500);
+  if (index) {
+    const idx = Math.max(1, Number(index));
+    return json({ ok: true, tugas: FALLBACK_TUGAS[idx - 1] || FALLBACK_TUGAS[0] });
   }
+  
+  return json({ ok: true, tugas: FALLBACK_TUGAS });
 }

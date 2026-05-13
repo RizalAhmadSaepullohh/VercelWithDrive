@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@remotion/whisper-web": "^4.0.363",
-    "@supabase/supabase-js": "^2.46.2",
     "@xenova/transformers": "^2.0.1",
     "compromise": "^14.14.2",
     "firebase": "^12.13.0",
