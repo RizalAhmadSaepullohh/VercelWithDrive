@@ -175,6 +175,8 @@ export async function POST(req /** @type {NextRequest} */) {
     const buffer = Buffer.from(arrayBuffer);
     const stream = Readable.from(buffer);
 
+    let uploadSuccess = false;
+
     if (refreshToken && clientId && clientSecret) {
       try {
         console.log(`[GDrive OAuth2] Menggunakan otentikasi akun pribadi (User Impersonation) tanpa batas kuota...`);
@@ -189,9 +191,10 @@ export async function POST(req /** @type {NextRequest} */) {
         await deleteFileIfExists(drive, fileName, targetFolderId);
 
         console.log(`[GDrive Upload] Mengunggah berkas fisik via otentikasi pribadi: ${fileName}`);
+        const oauthStream = Readable.from(buffer);
         const uploadRes = await drive.files.create({
           resource: { name: fileName, parents: [targetFolderId] },
-          media: { mimeType: "audio/wav", body: stream },
+          media: { mimeType: "audio/wav", body: oauthStream },
           fields: "id, webViewLink",
           supportsAllDrives: true
         });
@@ -199,6 +202,7 @@ export async function POST(req /** @type {NextRequest} */) {
         fileId = uploadRes.data.id;
         webViewLink = uploadRes.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
         console.log(`[GDrive Sukses] Berkas fisik milik Anda mendarat sempurna! ID: ${fileId}`);
+        uploadSuccess = true;
 
         try {
           await drive.permissions.create({
@@ -209,11 +213,13 @@ export async function POST(req /** @type {NextRequest} */) {
         } catch (_) {}
       } catch (oauthErr) {
         console.error("[GDrive Fatal Error] Rincian kegagalan akses OAuth2 Pribadi:", oauthErr?.response?.data || oauthErr?.message || oauthErr);
-        webViewLink = `https://drive.google.com/drive/folders/${parentFolderId}?error=true`;
+        console.log("[GDrive Fallback] Mencoba menggunakan Service Account sebagai cadangan...");
       }
-    } else if (clientEmail && privateKey && !clientEmail.includes("gserviceaccount.com_placeholder")) {
+    }
+
+    if (!uploadSuccess && clientEmail && privateKey && !clientEmail.includes("gserviceaccount.com_placeholder")) {
       try {
-        console.log(`[GDrive Auth] Menginisialisasi otentikasi untuk email robot: ${clientEmail}`);
+        console.log(`[GDrive Auth] Menginisialisasi otentikasi untuk email robot: ${clientEmail} (Fallback/Utama)`);
         const auth = new google.auth.GoogleAuth({
           credentials: { client_email: clientEmail, private_key: privateKey },
           scopes: ["https://www.googleapis.com/auth/drive"]
@@ -226,17 +232,19 @@ export async function POST(req /** @type {NextRequest} */) {
         // Hapus file lama jika ada agar "Replace"
         await deleteFileIfExists(drive, fileName, targetFolderId);
 
-        console.log(`[GDrive Upload] Mengunggah berkas fisik: ${fileName}`);
+        console.log(`[GDrive Upload] Mengunggah berkas fisik via Service Account: ${fileName}`);
+        const saStream = Readable.from(buffer);
         const uploadRes = await drive.files.create({
           resource: { name: fileName, parents: [targetFolderId] },
-          media: { mimeType: "audio/wav", body: stream },
+          media: { mimeType: "audio/wav", body: saStream },
           fields: "id, webViewLink",
           supportsAllDrives: true
         });
 
         fileId = uploadRes.data.id;
         webViewLink = uploadRes.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
-        console.log(`[GDrive Sukses] Berkas fisik mendarat mulus! ID: ${fileId}`);
+        console.log(`[GDrive Sukses] Berkas fisik mendarat mulus via Service Account! ID: ${fileId}`);
+        uploadSuccess = true;
 
         try {
           await drive.permissions.create({
@@ -247,11 +255,12 @@ export async function POST(req /** @type {NextRequest} */) {
         } catch (_) {}
       } catch (gdriveErr) {
         console.error("[GDrive Fatal Error] Rincian kegagalan akses API Drive Robot:", gdriveErr?.response?.data || gdriveErr?.message || gdriveErr);
-        webViewLink = `https://drive.google.com/drive/folders/${parentFolderId}?error=true`;
       }
-    } else {
-      console.warn("[GDrive Simulasi] Kredensial Service Account / OAuth2 belum lengkap, mengaktifkan mode simulasi tautan.");
-      webViewLink = `https://drive.google.com/drive/folders/${parentFolderId}?simulated=true`;
+    }
+
+    if (!uploadSuccess) {
+      console.warn("[GDrive Simulasi] Kredensial Service Account / OAuth2 belum lengkap atau gagal, mengaktifkan mode simulasi tautan.");
+      webViewLink = `https://drive.google.com/drive/folders/${parentFolderId}?error=true`;
     }
 
     // 4. Catat riwayat rekaman via REST API murni tanpa gRPC
